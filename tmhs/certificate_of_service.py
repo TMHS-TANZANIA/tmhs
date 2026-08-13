@@ -24,7 +24,7 @@ import frappe
 from fontTools import subset
 from fontTools.ttLib import TTFont
 from frappe import _
-from frappe.utils import getdate, today
+from frappe.utils import getdate
 
 SVG_NS = "http://www.w3.org/2000/svg"
 TEMPLATE = os.path.join(os.path.dirname(__file__), "certificate_of_service.svg")
@@ -220,10 +220,44 @@ def _director_name(user):
 	)
 
 
-def render_svg(employee, director_name, director_title):
-	"""Fill the template. The employee's Designation and Date of Joining are
-	verified in the form script, which can name the field and the record to
-	fix; both come through as an empty line rather than an error here."""
+@frappe.whitelist()
+def service_period(employee):
+	"""Dates the download dialog starts from, both editable there.
+
+	The certificate states the period served, which is the contract's, not the
+	employee record's: Date of Joining is only a fallback for someone hired
+	before any of this was in the system.
+	"""
+	frappe.only_for(PRINT_ROLES)
+
+	doc = frappe.get_doc("Employee", employee)
+	doc.check_permission("read")
+
+	# The latest contract wins: an employee who has been renewed has several,
+	# and the current one is what the certificate is being issued against.
+	contract = (
+		frappe.db.get_value(
+			"Contract",
+			{"party_type": "Employee", "party_name": employee},
+			["start_date", "end_date"],
+			as_dict=True,
+			order_by="start_date desc",
+		)
+		or frappe._dict()
+	)
+	offer_date = doc.job_applicant and frappe.db.get_value(
+		"Job Offer", {"job_applicant": doc.job_applicant}, "offer_date", order_by="offer_date desc"
+	)
+
+	return {
+		"from_date": offer_date or contract.start_date or doc.date_of_joining,
+		"to_date": contract.end_date or doc.contract_end_date or doc.relieving_date,
+	}
+
+
+def render_svg(employee, from_date, to_date, director_name, director_title):
+	"""Fill the template. Everything here is verified in the form script, which
+	can name the field and the record to fix, so nothing throws."""
 	tree = ET.parse(TEMPLATE)
 	root = tree.getroot()
 
@@ -232,18 +266,15 @@ def render_svg(employee, director_name, director_title):
 	style.text = _font_face_css(_template_fonts(root))
 	root.insert(0, style)
 
-	# An employee who has not left yet is certified as serving up to today.
-	served_to = employee.relieving_date or today()
-
 	for node_id, value, x in (
 		("text367", employee.employee_name.upper(), CENTRE),
 		(
 			"text368",
 			f"has been working with us in the position of {employee.designation} "
-			f"from {_long_date(employee.date_of_joining)} to",
+			f"from {_long_date(from_date)} to",
 			CENTRE,
 		),
-		("text369", _long_date(served_to), CENTRE),
+		("text369", _long_date(to_date), CENTRE),
 		("text370", director_name.upper(), SIGNATURE),
 		("text371", director_title, SIGNATURE),
 	):
@@ -252,7 +283,7 @@ def render_svg(employee, director_name, director_title):
 	return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
-def render_pdf(employee, director_name, director_title):
+def render_pdf(employee, from_date, to_date, director_name, director_title):
 	"""The same SVG, converted by headless Chrome.
 
 	Not Frappe's own wkhtmltopdf: its QtWebKit rasterises the whole page to a
@@ -266,7 +297,7 @@ def render_pdf(employee, director_name, director_title):
 		"html,body{margin:0;padding:0}"
 		"svg{display:block;width:297mm;height:210mm}"
 		"</style></head><body>"
-		+ render_svg(employee, director_name, director_title).split("?>", 1)[-1]
+		+ render_svg(employee, from_date, to_date, director_name, director_title).split("?>", 1)[-1]
 		+ "</body></html>"
 	)
 
@@ -353,12 +384,12 @@ def _chrome():
 
 
 @frappe.whitelist()
-def download(employee, director, title):
+def download(employee, director, title, from_date, to_date):
 	frappe.only_for(PRINT_ROLES)
 
 	doc = frappe.get_doc("Employee", employee)
 	doc.check_permission("read")
 
 	frappe.response.filename = f"Certificate of Service - {doc.employee_name}.pdf"
-	frappe.response.filecontent = render_pdf(doc, _director_name(director), title)
+	frappe.response.filecontent = render_pdf(doc, from_date, to_date, _director_name(director), title)
 	frappe.response.type = "download"

@@ -17,7 +17,6 @@ from types import SimpleNamespace
 
 from pypdf import PdfReader
 
-from tmhs import certificate_of_service
 from tmhs.certificate_of_service import (
 	CENTRE,
 	SIGNATURE,
@@ -34,14 +33,13 @@ EMPLOYEE = SimpleNamespace(
 	name="HR-EMP-00042",
 	employee_name="Amina Said Hamis",
 	designation="Waste Attendant",
-	date_of_joining="2025-01-03",
-	relieving_date="2026-03-30",
 )
+PERIOD = ("2025-01-03", "2026-03-30")
 DIRECTOR = ("Victoria Wilbard", "Director of HR & Administration")
 
 
 def check():
-	svg = render_svg(EMPLOYEE, *DIRECTOR)
+	svg = render_svg(EMPLOYEE, *PERIOD, *DIRECTOR)
 	root = ET.fromstring(svg)
 
 	def where(el):
@@ -71,12 +69,6 @@ def check():
 	# signature block, centred on the left-hand rule
 	assert got["text370"] == ("VICTORIA WILBARD", "middle", SIGNATURE), got["text370"]
 	assert got["text371"] == ("Director of HR & Administration", "middle", SIGNATURE), got["text371"]
-
-	# an employee who has not left yet is certified as serving up to today
-	certificate_of_service.today = lambda: "2026-08-01"  # today() needs a site
-	still_here = SimpleNamespace(**{**vars(EMPLOYEE), "relieving_date": None})
-	line = ET.fromstring(render_svg(still_here, *DIRECTOR)).find(f".//{{{SVG_NS}}}text[@id='text369']")
-	assert "".join(line.itertext()) == "1st August, 2026", line[0].text
 
 	# ordinals, including the teens that do not follow the last-digit rule
 	assert [_ordinal(d) for d in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 30)] == [
@@ -138,7 +130,7 @@ def check():
 		print("ok (PDF check skipped: no Chrome on this machine)")
 		return
 
-	page = PdfReader(io.BytesIO(render_pdf(EMPLOYEE, *DIRECTOR))).pages[0]
+	page = PdfReader(io.BytesIO(render_pdf(EMPLOYEE, *PERIOD, *DIRECTOR))).pages[0]
 	assert 296.5 < float(page.mediabox.width) / 72 * 25.4 < 297.5, page.mediabox
 	assert 209.5 < float(page.mediabox.height) / 72 * 25.4 < 210.5, page.mediabox
 

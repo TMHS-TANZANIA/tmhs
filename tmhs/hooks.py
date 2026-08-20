@@ -140,6 +140,13 @@ doctype_js = {"Employee": "public/js/employee.js","Material Request": "public/js
 # 	}
 # }
 
+doc_events = {
+	"Issue": {"on_update": "tmhs.issue.on_update"},
+	"Comment": {"after_insert": "tmhs.issue.on_comment"},
+}
+
+after_migrate = ["tmhs.issue.setup"]
+
 # Scheduled Tasks
 # ---------------
 
